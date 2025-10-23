@@ -1,0 +1,401 @@
+DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Spacemafia v2 (iPhone FIX)</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: monospace;
+  color: #fff;
+  height: 100vh;
+  display: flex;
+  background: #000;
+  background-size: cover;
+  background-position: center;
+}
+#topRightLabel {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-weight: bold;
+  color: #fff;
+}
+#sidebar {
+  width: 260px;
+  background: rgba(17,17,17,0.9);
+  padding: 10px;
+  border-right: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+}
+#mainContainer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+#chatHeader {
+  background: rgba(34,34,34,0.9);
+  padding: 10px;
+  font-weight: bold;
+  color: #fff;
+}
+#accountInfo {
+  font-size:12px;
+  color:#ccc;
+  margin-top:4px;
+}
+#chat {
+  flex: 1;
+  overflow-y: auto;
+  background: rgba(26,26,26,0.9);
+  padding: 10px;
+}
+#inputBox {
+  background: rgba(17,17,17,0.9);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+}
+input, textarea, button {
+  background: #1a1a1a;
+  color: #fff;
+  border: none;
+  padding: 8px;
+  margin-bottom: 6px;
+}
+textarea { height: 60px; resize: none; }
+button {
+  background: #333;
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+button:hover { background: #444; }
+ul { list-style: none; padding: 0; margin: 0; }
+li { padding: 6px; cursor: pointer; color: #fff; }
+li:hover { background: #222; }
+.group { font-weight: bold; margin-top: 10px; padding-top: 8px; border-top: 1px solid #333; color: #fff; }
+.category-content { display: none; margin-left: 10px; }
+.category-content.show { display: block; }
+.message { margin-bottom: 8px; font-size: 14px; color: #fff; }
+.username { color: #fff; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<aside id="sidebar">
+  <input id="token" type="text" placeholder="Token Discord (manuel)" />
+  <textarea id="tokens" placeholder="Tokens (un par ligne)" style="height:80px;"></textarea>
+
+  <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
+    <label style="font-size:12px; color:#ccc;">Rotation:</label>
+    <select id="tokenMode" style="padding:6px;">
+      <option value="rotate">Tour par tour</option>
+      <option value="same">Toujours le 1er</option>
+    </select>
+    <button id="connectBtn">Connect</button>
+  </div>
+
+  <button id="guildBtn">Serveurs</button>
+  <button id="dmBtn">DMs / Groupes</button>
+  <button id="tinyBtn">;)</button>
+
+  <div class="group collapsible"><span class="catToggle">Serveurs</span></div>
+  <ul id="guildList" class="category-content"></ul>
+
+  <div class="group collapsible"><span class="catToggle">DMs & Groupes</span></div>
+  <ul id="dmList" class="category-content"></ul>
+
+  <div class="group collapsible"><span class="catToggle">Salons</span></div>
+  <ul id="channelList" class="category-content"></ul>
+</aside>
+
+<main id="mainContainer">
+  <header id="chatHeader">
+    <span id="chatTitle">Aucune conversation</span>
+    <div id="topRightLabel">Made By @fini</div>
+    <div id="accountInfo">
+      PP: <span id="accountAvatar">-</span> | Pseudo: <span id="accountUsername">-</span> | Token: <span id="accountToken">-</span>
+    </div>
+  </header>
+
+  <section id="chat"></section>
+
+  <footer id="inputBox">
+    <div style="display:flex; align-items:center; gap:5px;">
+      <input id="mentions" type="text" placeholder="Mentions automatiques" style="flex:1;" />
+      <button id="pasteBtn">Paste</button>
+    </div>
+
+    <textarea id="message" placeholder="Message..."></textarea>
+    <button id="pauseBtn">Pause envoi</button>
+
+    <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
+      <input type="file" id="txtFileInput" accept=".txt" />
+      <button id="startTxtBtn">Lancer</button>
+      <button id="stopTxtBtn">Arrêter</button>
+      <input type="file" id="bgImageInput" accept="image/*" />
+    </div>
+
+    <div style="display:flex; align-items:center; gap:5px; margin-top:5px;">
+      <button id="autoReactBtn">AutoReact: OFF</button>
+      <input id="autoReactEmojisInput" type="text" placeholder="Emojis" style="flex:1;">
+    </div>
+  </footer>
+</main>
+<script>
+let tokenManual='', tokenRotationIndex=0, currentChannelId=null, socket=null, userId=null;
+const messageBox=document.getElementById('message');
+const mentionsBox=document.getElementById('mentions');
+
+let autoReactEnabled=false;
+let autoReactEmojis=["😂","🔥","❤️","👍","😎","💀","😡","💩","😱","👀"];
+
+const autoReactBtn=document.getElementById('autoReactBtn');
+const autoReactEmojisInput=document.getElementById('autoReactEmojisInput');
+
+autoReactBtn.addEventListener('click',()=>{
+  autoReactEnabled=!autoReactEnabled;
+  autoReactBtn.textContent=`AutoReact: ${autoReactEnabled?'ON':'OFF'}`;
+  autoReactBtn.style.background=autoReactEnabled?'#2e8b57':'#333';
+});
+
+autoReactEmojisInput.addEventListener('input',()=>{
+  const t=autoReactEmojisInput.value.trim();
+  autoReactEmojis=t?t.split(/\s+/):["😂","🔥","❤️","👍","😎","💀","😡","💩","😱","👀"];
+});
+
+function getTokenForRequest(adv=true){
+  const t=document.getElementById('tokens').value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+  const m=document.getElementById('tokenMode').value;
+  if(!t.length) return document.getElementById('token').value.trim();
+  if(m==='same') return t[0];
+  const token=t[tokenRotationIndex % t.length];
+  if(adv) tokenRotationIndex=(tokenRotationIndex+1)%t.length;
+  return token;
+}
+
+async function connect(){
+  const tokenToUse=getTokenForRequest(false);
+  if(!tokenToUse){alert("Aucun token fourni.");return;}
+  tokenManual=tokenToUse;
+
+  if(socket) try{socket.close();}catch(e){}
+  try{
+    const user=await fetch('https://discord.com/api/v9/users/@me',{headers:{Authorization:tokenManual}}).then(r=>r.json());
+    userId=user.id;
+    document.getElementById('accountAvatar').textContent=user.avatar?'Oui':'Non';
+    document.getElementById('accountUsername').textContent=user.username;
+    document.getElementById('accountToken').textContent=tokenManual.slice(0,5)+'...';
+  }catch(e){console.error(e);}
+
+  socket=new WebSocket('wss://gateway.discord.gg/?v=9&encoding=json');
+  socket.onopen=()=>{
+    socket.send(JSON.stringify({
+      op:2,
+      d:{
+        token:tokenManual,
+        intents:32767,
+        properties:{"$os":"iOS","$browser":"Safari","$device":"mobile"}
+      }
+    }));
+  };
+
+  socket.onmessage=({data})=>{
+    const p=JSON.parse(data);
+    if(p.t==='MESSAGE_CREATE'){
+      const m=p.d;
+      if(m.channel_id===currentChannelId){
+        appendMessage(m.author.id===userId?'Vous':m.author.username,m.content);
+      }
+    }
+  };
+}
+
+async function loadGuilds(){
+  const token=getTokenForRequest();
+  const g=await fetch('https://discord.com/api/v9/users/@me/guilds',{headers:{Authorization:token}}).then(r=>r.json());
+  const list=document.getElementById('guildList');
+  list.innerHTML='';
+
+  (g||[]).forEach(guild=>{
+    const li=document.createElement('li');
+    li.textContent=guild.name;
+    li.addEventListener('click',async()=>{
+      const channels=await fetch(`https://discord.com/api/v9/guilds/${guild.id}/channels`,{headers:{Authorization:token}}).then(r=>r.json());
+      const cl=document.getElementById('channelList');
+      cl.innerHTML='';
+      (channels||[]).filter(c=>c.type===0).forEach(c=>{
+        const cli=document.createElement('li');
+        cli.textContent=`#${c.name}`;
+        cli.addEventListener('click',()=>openChannel(c.id,`${guild.name} / #${c.name}`));
+        cl.appendChild(cli);
+      });
+    });
+    list.appendChild(li);
+  });
+}
+
+async function loadDMs(){
+  const token=getTokenForRequest();
+  const dms=await fetch('https://discord.com/api/v9/users/@me/channels',{headers:{Authorization:token}}).then(r=>r.json());
+  const list=document.getElementById('dmList');
+  list.innerHTML='';
+
+  (dms||[]).forEach(dm=>{
+    const name=dm.recipients?.map(u=>u.username).join(', ')||dm.name||'Groupe';
+    const li=document.createElement('li');
+    li.textContent=name;
+    li.addEventListener('click',()=>openChannel(dm.id,name));
+    list.appendChild(li);
+  });
+}
+
+function openChannel(id,label){
+  currentChannelId=id;
+  document.getElementById('chatTitle').textContent=label;
+  loadMessages();
+}
+
+async function loadMessages(){
+  const token=getTokenForRequest();
+  const msgs=await fetch(`https://discord.com/api/v9/channels/${currentChannelId}/messages?limit=20`,{headers:{Authorization:token}}).then(r=>r.json());
+  const chat=document.getElementById('chat');
+  chat.innerHTML='';
+  (msgs||[]).reverse().forEach(m=>{
+    appendMessage(m.author.id===userId?'Vous':m.author.username,m.content);
+  });
+}
+
+function appendMessage(author,content){
+  const chat=document.getElementById('chat');
+  const div=document.createElement('div');
+  div.className='message';
+  div.innerHTML=`<span class='username'>${author}:</span> ${content}`;
+  chat.appendChild(div);
+  chat.scrollTop=chat.scrollHeight;
+}
+
+async function autoReact(messageId){
+  if(!autoReactEnabled) return;
+  const token=getTokenForRequest(false);
+  if(!token||!currentChannelId) return;
+  const e=encodeURIComponent(autoReactEmojis[Math.floor(Math.random()*autoReactEmojis.length)]);
+  try{
+    await fetch(`https://discord.com/api/v9/channels/${currentChannelId}/messages/${messageId}/reactions/${e}/@me`,
+      {method:"PUT",headers:{Authorization:token}});
+  }catch(e){console.error(e);}
+}
+
+async function realSendMessage(content,mentions){
+  const token=getTokenForRequest();
+  const full=content+(mentions?` ${mentions}`:'');
+  const res=await fetch(`https://discord.com/api/v9/channels/${currentChannelId}/messages`,{
+    method:'POST',
+    headers:{'Authorization':token,'Content-Type':'application/json'},
+    body:JSON.stringify({content:full})
+  });
+  const msg=await res.json();
+  if(msg&&msg.id) autoReact(msg.id);
+}
+
+function sendMessage(){
+  const content=messageBox.value.trim();
+  const mentions=mentionsBox.value.trim();
+  if(!content||!currentChannelId) return;
+  appendMessage('Vous',content+(mentions?` ${mentions}`:''));
+  realSendMessage(content,mentions);
+  messageBox.value='';
+}
+
+messageBox.addEventListener('keydown',e=>{
+  if(e.key==='Enter' && !e.shiftKey){
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+function toggleCategory(el){
+  const next=el.parentElement.nextElementSibling;
+  if(next&&next.classList.contains("category-content")) next.classList.toggle("show");
+}
+
+document.querySelectorAll('.catToggle').forEach(t=>{
+  t.addEventListener('click',()=>toggleCategory(t));
+});
+
+document.getElementById('pasteBtn').addEventListener('click',async()=>{
+  try{
+    const txt = await navigator.clipboard.readText();
+    mentionsBox.value = txt;
+  }catch(e){
+    alert("iPhone bloque l’accès au presse-papiers. Colle manuellement.");
+  }
+});
+
+const guildBtn=document.getElementById('guildBtn');
+const dmBtn=document.getElementById('dmBtn');
+const tinyBtn=document.getElementById('tinyBtn');
+const pauseBtn=document.getElementById('pauseBtn');
+
+guildBtn.addEventListener('click',loadGuilds);
+dmBtn.addEventListener('click',loadDMs);
+tinyBtn.addEventListener('click',()=>sendMessage(";)",null));
+
+let paused=false;
+pauseBtn.addEventListener('click',()=>{
+  paused=!paused;
+  pauseBtn.textContent=paused?"Reprendre":"Pause envoi";
+});
+
+let txtLines=[], txtLoopInterval=null;
+const txtFileInput=document.getElementById('txtFileInput');
+const startTxtBtn=document.getElementById('startTxtBtn');
+const stopTxtBtn=document.getElementById('stopTxtBtn');
+
+txtFileInput.addEventListener('change',async e=>{
+  const file=e.target.files[0];
+  if(!file)return;
+  const t=await file.text();
+  txtLines=t.split(/\r?\n/).filter(Boolean);
+  alert(`Fichier chargé: ${txtLines.length} lignes`);
+});
+
+startTxtBtn.addEventListener('click',()=>{
+  if(!txtLines.length){alert("Aucun fichier chargé.");return;}
+  if(!currentChannelId){alert("Aucun salon sélectionné.");return;}
+  if(txtLoopInterval) clearInterval(txtLoopInterval);
+  let i=0;
+  txtLoopInterval=setInterval(()=>{
+    const line=txtLines[i%txtLines.length];
+    realSendMessage(line,mentionsBox.value.trim());
+    appendMessage('Vous',line+(mentionsBox.value.trim()?` ${mentionsBox.value.trim()}`:''));
+    i++;
+  },2000);
+});
+
+stopTxtBtn.addEventListener('click',()=>{
+  clearInterval(txtLoopInterval);
+  txtLoopInterval=null;
+});
+
+const bgImageInput=document.getElementById('bgImageInput');
+bgImageInput.addEventListener('change',e=>{
+  const file=e.target.files[0];
+  if(!file)return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    document.body.style.backgroundImage=`url(${e.target.result})`;
+  };
+  reader.readAsDataURL(file);
+});
+
+// connectBtn en dernier (important pour iOS)
+document.getElementById("connectBtn").addEventListener("click", connect);
+</script>
+</body>
+</html>
